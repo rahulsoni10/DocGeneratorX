@@ -11,9 +11,6 @@ import os
 from starlette.concurrency import run_in_threadpool
 from utils.database import get_session
 from utils.models import PDFS
-from services.retrieval_service import RetrievalService
-from parsers.pdf_parser import PDFParser
-from utils.chunker import text_n_images
 
 router = APIRouter(prefix="/api/pdf", tags=["pdf"])
 
@@ -41,13 +38,6 @@ async def upload_pdfs(
 
         try:
             tmp_id = "".join(str(uuid.uuid4()).split("-"))
-            
-            # Parse PDF content
-            pdf_parser = PDFParser()
-            data, num_images, num_tables = await pdf_parser.extract_pdf_content(temp_file_path)
-            
-            # Process and chunk content
-            docs = text_n_images(data, tmp_id, session)
             
             # Store in vector database using the original working method
             from utils.retriver import Retriver
@@ -82,8 +72,9 @@ def delete_pdf(pdf_uuid: str, session: Session = Depends(get_session)):
     """Delete a specific PDF and its embeddings."""
     pdf_to_delete = session.exec(select(PDFS).where(PDFS.pdf_uuid == pdf_uuid)).first()
     if pdf_to_delete:
-        retrieval_service = RetrievalService(document_id=pdf_uuid)
-        retrieval_service.delete_collection()
+        from utils.retriver import Retriver
+        retriever = Retriver(document_id=pdf_uuid)
+        retriever.delete_collection()
         session.delete(pdf_to_delete)
         session.commit()
         return {"message": f"PDF '{pdf_uuid}' and its embeddings deleted successfully."}
@@ -95,8 +86,9 @@ def delete_all_pdfs(session: Session = Depends(get_session)):
     """Delete all PDFs and their embeddings."""
     all_pdfs = session.exec(select(PDFS)).all()
     for pdf in all_pdfs:
-        retrieval_service = RetrievalService(document_id=pdf.pdf_uuid)
-        retrieval_service.delete_collection()
+        from utils.retriver import Retriver
+        retriever = Retriver(document_id=pdf.pdf_uuid)
+        retriever.delete_collection()
         session.delete(pdf)
     session.commit()
     return {"message": "All PDFs and their embeddings deleted successfully."}

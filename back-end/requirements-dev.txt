@@ -1,0 +1,27 @@
+# Development requirements (lighter version)
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+requests
+pydantic
+typing-extensions
+aiohttp
+pycryptodome
+llama-index-vector-stores-postgres
+beautifulsoup4
+boto3
+python-docx
+docx
+botocore
+langdetect
+llama-index
+llama-cloud-services
+llama-parse
+PyMuPDF
+pyparsing
+sqlmodel
+psycopg2-binary
+websockets
+Pillow
+PyPDF2
