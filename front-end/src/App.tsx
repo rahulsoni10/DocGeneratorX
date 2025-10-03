@@ -11,17 +11,17 @@ import {
   Avatar,
   Divider,
   LinearProgress,
-  Alert,
 } from "@mui/material";
 import { useFormik } from "formik";
 import CloseIcon from "@mui/icons-material/Close";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import DownloadIcon from "@mui/icons-material/Download";
 import SaveIcon from "@mui/icons-material/Save";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { FileUpload } from "./components/FileUpload";
 import { ResponseDisplay } from "./components/ResponseDisplay";
 import { DropDown } from "./components/DropDown";
-import { FileProgressList } from "./components/FileProgressList";
+import { TemplateFileSelector } from "./components/TemplateFileSelector";
 import {
   validateForm,
   validateArchitectureFiles,
@@ -110,13 +110,6 @@ const customTheme = createTheme({
   },
 });
 
-interface ProgressUpdate {
-  fileName: string;
-  status: string;
-  downloadUrl: string;
-  filesDone: number;
-  filesTotal: number;
-}
 
 interface GeneratedFile {
   fileName: string;
@@ -132,9 +125,17 @@ const App = () => {
   const [response, setResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState<string>("");
-  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
+  const [callLogs, setCallLogs] = useState<CallLog[]>([]);
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
   const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+  const [selectedTemplateFiles, setSelectedTemplateFiles] = useState<string[]>([]);
+
+  interface CallLog {
+    timestamp: string;
+    service: string;
+    message: string;
+    type: 'info' | 'success' | 'error';
+  }
 
   const promptFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -149,18 +150,45 @@ const App = () => {
       };
 
       ws.onmessage = (event) => {
-        const update: ProgressUpdate = JSON.parse(event.data);
-        setProgress(update);
+        const data = JSON.parse(event.data);
+        console.log('WebSocket message received:', data);
         
-        // Show toast notification
-        toast.success(`${update.fileName} generated!`);
+        // Handle call logs
+        if (data.type === 'call_log') {
+          setCallLogs(prev => [...prev, {
+            timestamp: new Date().toLocaleTimeString(),
+            service: data.service,
+            message: data.message,
+            type: data.logType || 'info'
+          }]);
+        }
         
-        // Update generated files list
-        setGeneratedFiles(prev => [...prev, {
-          fileName: update.fileName,
-          status: update.status,
-          downloadUrl: update.downloadUrl
-        }]);
+        // Handle final response
+        if (data.type === 'final_response') {
+          setResponse(data.message);
+          setLoading(false);
+          setCallLogs([]); // Clear logs when done
+        }
+        
+        // Handle file completion (legacy support)
+        if (data.fileName && data.downloadUrl) {
+          setGeneratedFiles(prev => {
+            const exists = prev.some(file => file.fileName === data.fileName);
+            if (!exists) {
+              return [...prev, {
+                fileName: data.fileName,
+                status: data.status,
+                downloadUrl: data.downloadUrl
+              }];
+            }
+            return prev;
+          });
+          
+          // Show toast notification
+          if (data.status === 'done') {
+            toast.success(`${data.fileName} generated successfully!`);
+          }
+        }
       };
 
       ws.onclose = () => {
@@ -207,7 +235,6 @@ const App = () => {
       setLoading(true);
       setResponse("");
       setGeneratedFiles([]);
-      setProgress(null);
 
       try {
         let processFlow = "";
@@ -222,15 +249,16 @@ const App = () => {
         const requestBody = {
           folder_name: packageName,
           user_prompt: values.prompt || "",
-          process_flow: processFlow
+          process_flow: processFlow,
+          selected_files: selectedTemplateFiles.length > 0 ? selectedTemplateFiles : null
         };
 
         const response = await fetch(`${BASE_URL}api/template/fill`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody)
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
@@ -239,7 +267,8 @@ const App = () => {
 
         const data = await response.json();
         setTaskId(data.task_id);
-        setResponse("Template processing started. You'll receive real-time updates.");
+        setResponse("");
+        setCallLogs([]); // Clear previous logs
 
       } catch (error) {
         console.error("Error:", error);
@@ -292,12 +321,14 @@ const App = () => {
   };
 
   const handleDownload = (fileName: string, downloadUrl: string) => {
-    const a = document.createElement("a");
-    a.href = `${BASE_URL}${downloadUrl}`;
+      const a = document.createElement("a");
+    // Remove leading slash from downloadUrl to avoid double slash with BASE_URL
+    const cleanDownloadUrl = downloadUrl.startsWith('/') ? downloadUrl.substring(1) : downloadUrl;
+    a.href = `${BASE_URL}${cleanDownloadUrl}`;
     a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
   };
 
   const handleDownloadAll = () => {
@@ -334,56 +365,43 @@ const App = () => {
           }}
         >
           {/* Header */}
-          <Box 
-            display="flex" 
-            flexDirection="column"
-            alignItems="center" 
-            justifyContent="center" 
-            gap={1.5} 
-            mb={2}
-          >
-            <Avatar
-              src="/Bayer-Logo.svg"
-              alt="Bayer Logo"
-              sx={{ 
+<Box 
+  display="flex" 
+  flexDirection="column"
+  alignItems="center" 
+  justifyContent="center" 
+  gap={1.5} 
+  mb={2}
+>
+  <Avatar
+    src="/Bayer-Logo.svg"
+    alt="Bayer Logo"
+    sx={{ 
                 width: 108,
-                height: 108,
-                '& img': {
-                  objectFit: 'contain',
-                }
-              }}
-            />
-            <Typography
-              sx={{
-                background: 'linear-gradient(45deg, rgb(0, 188, 255) 0%, rgb(31, 189, 129) 50%, rgb(138, 211, 42) 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                backgroundClip: 'text',
-                fontWeight: 600,
-                textAlign: 'center',
-                fontSize: '1.4rem',
-                lineHeight: 1.2,
-                letterSpacing: '-0.025em',
-              }}
-            >
-              Bayer Compliance Agent
-            </Typography>
-          </Box>
+      height: 108,
+      '& img': {
+        objectFit: 'contain',
+      }
+    }}
+  />
+  <Typography
+    sx={{
+      background: 'linear-gradient(45deg, rgb(0, 188, 255) 0%, rgb(31, 189, 129) 50%, rgb(138, 211, 42) 100%)',
+      WebkitBackgroundClip: 'text',
+      WebkitTextFillColor: 'transparent',
+      backgroundClip: 'text',
+      fontWeight: 600,
+      textAlign: 'center',
+      fontSize: '1.4rem',
+      lineHeight: 1.2,
+      letterSpacing: '-0.025em',
+    }}
+  >
+    Bayer Compliance Agent
+  </Typography>
+</Box>
           <Divider sx={{ mb: 1 }} />
 
-          {/* Progress Display */}
-          {progress && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                Progress: {progress.filesDone} / {progress.filesTotal} files generated
-              </Typography>
-              <LinearProgress 
-                variant="determinate" 
-                value={(progress.filesDone / progress.filesTotal) * 100}
-                sx={{ mt: 1 }}
-              />
-            </Alert>
-          )}
 
           {/* Loading Progress */}
           {loading && (
@@ -468,8 +486,20 @@ const App = () => {
           {/* Select Package Dropdown */}
           <DropDown
             selectedTemplate={packageName}
-            onSelect={(name) => setPackageName(name)}
+            onSelect={(name) => {
+              setPackageName(name);
+              setSelectedTemplateFiles([]); // Reset selected files when package changes
+            }}
           />
+
+          {/* Template File Selector */}
+          {packageName && (
+            <TemplateFileSelector
+              folderName={packageName}
+              onFilesSelected={setSelectedTemplateFiles}
+              selectedFiles={selectedTemplateFiles}
+            />
+          )}
 
           {/* Content Files Section */}
           <Box>
@@ -622,7 +652,7 @@ const App = () => {
             AI Response & Progress
           </Typography>
 
-          <ResponseDisplay loading={loading} response={response} />
+          <ResponseDisplay loading={loading} response={response} callLogs={callLogs} />
 
           {/* Generated Files List */}
           {generatedFiles.length > 0 && (
@@ -630,28 +660,57 @@ const App = () => {
               <Typography variant="h6" sx={{ mb: 1, fontSize: '1.1rem' }}>
                 Generated Files ({generatedFiles.length})
               </Typography>
-              <FileProgressList 
-                files={generatedFiles}
-                onDownload={handleDownload}
-              />
+              {/* Simple file list without progress bars */}
+              <Box sx={{ bgcolor: 'background.paper', borderRadius: 1, boxShadow: 1, p: 1 }}>
+                {generatedFiles.map((file, index) => (
+                  <Box 
+                    key={index}
+                    sx={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      p: 1,
+                      borderBottom: index < generatedFiles.length - 1 ? '1px solid' : 'none',
+                      borderColor: 'divider'
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CheckCircleIcon color="success" fontSize="small" />
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        {file.fileName}
+                      </Typography>
+                    </Box>
+                    {file.downloadUrl && (
+                      <Button
+                        size="small"
+                        startIcon={<DownloadIcon sx={{ fontSize: 16 }} />}
+                        onClick={() => handleDownload(file.fileName, file.downloadUrl!)}
+                        sx={{ minWidth: 'auto' }}
+                      >
+                        Download
+                      </Button>
+                    )}
+                  </Box>
+                ))}
+              </Box>
               
-              {progress && progress.filesDone === progress.filesTotal && (
-                <Button
-                  variant="contained"
-                  size="medium"
-                  startIcon={<DownloadIcon sx={{ fontSize: 18 }} />}
+              {generatedFiles.length > 0 && (
+            <Button
+              variant="contained"
+              size="medium"
+              startIcon={<DownloadIcon sx={{ fontSize: 18 }} />}
                   onClick={handleDownloadAll}
-                  sx={{
+              sx={{
                     mt: 2,
-                    alignSelf: "flex-start",
-                    background: 'linear-gradient(45deg, rgb(31, 189, 129) 0%, rgb(138, 211, 42) 100%)',
-                    py: 1,
-                    px: 2,
-                    fontSize: '0.9rem',
-                  }}
-                >
+                alignSelf: "flex-start",
+                background: 'linear-gradient(45deg, rgb(31, 189, 129) 0%, rgb(138, 211, 42) 100%)',
+                py: 1,
+                px: 2,
+                fontSize: '0.9rem',
+              }}
+            >
                   Download All Files
-                </Button>
+            </Button>
               )}
             </Box>
           )}

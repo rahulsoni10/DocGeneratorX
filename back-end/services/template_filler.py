@@ -11,13 +11,29 @@ from utils.models import PDFS
 from utils.retriver import Retriver
 from services.llm_service import LLMService
 from utils.prompt_templates import IMPROVED_PROMPT_TEMPLATE, format_retrieved_chunks
+from api.websocket import broadcast_progress_update_sync
 
 
 class TemplateFiller:
     """Service for filling placeholders in .docx templates."""
     
-    def __init__(self):
+    def __init__(self, task_id: str = None):
         self.llm_service = LLMService()
+        self.task_id = task_id
+
+    def send_call_log(self, service: str, message: str, log_type: str = 'info'):
+        """Send a call log via WebSocket."""
+        if self.task_id:
+            try:
+                log_data = {
+                    "type": "call_log",
+                    "service": service,
+                    "message": message,
+                    "logType": log_type
+                }
+                broadcast_progress_update_sync(self.task_id, log_data)
+            except Exception as e:
+                print(f"Failed to send call log: {e}")
 
     def extract_angular_context(self, text: str) -> str:
         """Extract content from angular brackets."""
@@ -93,9 +109,27 @@ def retrieve_placeholder_content(
     context_type: str,
     session: Session,
     user_prompt: str = "",
-    process_flow: str = ""
+    process_flow: str = "",
+    task_id: str = None
 ):
     """Retrieve placeholder content using RAG + LLM with improved prompts."""
+    
+    def send_call_log(service: str, message: str, log_type: str = 'info'):
+        """Send a call log via WebSocket."""
+        if task_id:
+            try:
+                log_data = {
+                    "type": "call_log",
+                    "service": service,
+                    "message": message,
+                    "logType": log_type
+                }
+                broadcast_progress_update_sync(task_id, log_data)
+            except Exception as e:
+                print(f"Failed to send call log: {e}")
+    
+    send_call_log("retrieval_service", f"Searching for relevant documents for placeholder: {ph}")
+    
     all_pdfs = session.exec(select(PDFS)).all()
     relevant_docs = []
 
@@ -107,11 +141,15 @@ def retrieve_placeholder_content(
 
     # Sort by relevance score
     relevant_docs.sort(key=lambda x: x.score, reverse=True)
+    
+    send_call_log("retrieval_service", f"Found {len(relevant_docs)} relevant documents")
 
     # Format retrieved chunks for better LLM consumption
     formatted_chunks = format_retrieved_chunks(relevant_docs)
 
     # Create improved prompt
+    send_call_log("llm_service", f"Generating content for placeholder: {ph}")
+    
     llm_service = LLMService()
     prompt = IMPROVED_PROMPT_TEMPLATE.format(
         placeholder=ph,
@@ -121,8 +159,6 @@ def retrieve_placeholder_content(
         flow_summary=process_flow or ""
     )
 
-    print(f"\n[Template Parser Prompt for '{ph}']:\n{prompt}\n")
-
     # Handle image in process flow if present
     image_base64 = None
     if process_flow and process_flow.startswith("data:image/"):
@@ -130,6 +166,8 @@ def retrieve_placeholder_content(
 
     # Get response from LLM
     response = llm_service.query_llm(prompt, image_base64)
+    
+    send_call_log("llm_service", f"Generated content for placeholder: {ph}")
     
     if response:
         response = str(response).removeprefix("```json").removesuffix('```')

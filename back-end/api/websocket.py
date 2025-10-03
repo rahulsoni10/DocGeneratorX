@@ -59,3 +59,14 @@ async def websocket_progress(websocket: WebSocket, task_id: str):
 async def broadcast_progress_update(task_id: str, update_data: dict):
     """Broadcast progress update to all connected clients for a task."""
     await manager.send_progress_update(task_id, update_data)
+
+
+def broadcast_progress_update_sync(task_id: str, update_data: dict):
+    """Synchronous version of broadcast progress update."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(manager.send_progress_update(task_id, update_data))
+    except RuntimeError:
+        # If no event loop is running, create a new one
+        asyncio.run(manager.send_progress_update(task_id, update_data))
